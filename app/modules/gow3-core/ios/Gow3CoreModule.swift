@@ -92,8 +92,41 @@ public class Gow3CoreModule: Module {
 
   /// Documents/gow3: boot-linked.bin, content.bin and patches.bin from a PC install of gow3 (its out/
   /// folder) and game/, the dumped game folder (eboot.bin, sce_sys, ...). Copied in with the Files app.
+  /// Inside LiveContainer, a gow3 folder at LiveContainer's top level is used when this app's own
+  /// one (in its LiveContainer data container) has no game files (Gow3LiveContainer.swift).
   private static var gameRoot: URL {
-    FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("gow3")
+    let candidates = Gow3LiveContainer.gameRootCandidates
+    let manager = FileManager.default
+    for root in candidates {
+      if manager.fileExists(atPath: root.appendingPathComponent("boot-linked.bin").path) || app0(in: root) != nil {
+        return root
+      }
+    }
+    return candidates[0]
+  }
+
+  /// The dumped game folder: game/ itself, or the one folder inside game/ that holds eboot.bin
+  /// (a dump copied in as game/CUSA01715/...).
+  private static func app0(in root: URL) -> URL? {
+    let manager = FileManager.default
+    let game = root.appendingPathComponent("game")
+    if manager.fileExists(atPath: game.appendingPathComponent("eboot.bin").path) { return game }
+    guard let entries = try? manager.contentsOfDirectory(at: game, includingPropertiesForKeys: [.isDirectoryKey],
+                                                         options: [.skipsHiddenFiles]) else { return nil }
+    let dumps = entries.filter { manager.fileExists(atPath: $0.appendingPathComponent("eboot.bin").path) }
+    return dumps.count == 1 ? dumps[0] : nil
+  }
+
+  /// How the gow3 folder is reached in the Files app, for messages.
+  private static var folderLabel: String {
+    let root = gameRoot
+    guard Gow3LiveContainer.isActive else { return "Documents/gow3" }
+    // The Files app shows LiveContainer's Documents as its top level.
+    if let home = Gow3LiveContainer.hostHome {
+      let documents = home.appendingPathComponent("Documents").path + "/"
+      if root.path.hasPrefix(documents) { return "LiveContainer/" + root.path.dropFirst(documents.count) }
+    }
+    return root.path
   }
 
   private static var gameLogURL: URL { gameRoot.appendingPathComponent("loader.log") }
@@ -105,11 +138,12 @@ public class Gow3CoreModule: Module {
     guard !gameStarted else { throw Gow3Error(description: "The game already started; relaunch the app to start it again.") }
     guard gow3_jit_pool_ready() != 0 else { throw Gow3Error(description: "Enable JIT first.") }
     let manager = FileManager.default
-    guard manager.fileExists(atPath: gameRoot.appendingPathComponent("boot-linked.bin").path) else {
-      throw Gow3Error(description: "Missing Documents/gow3/boot-linked.bin (from gow3's out/ folder on the PC).")
+    let root = gameRoot
+    guard manager.fileExists(atPath: root.appendingPathComponent("boot-linked.bin").path) else {
+      throw Gow3Error(description: "Missing \(folderLabel)/boot-linked.bin (from gow3's out/ folder on the PC).")
     }
-    guard manager.fileExists(atPath: gameRoot.appendingPathComponent("game/eboot.bin").path) else {
-      throw Gow3Error(description: "Missing Documents/gow3/game/eboot.bin (the dumped game folder).")
+    guard app0(in: root) != nil else {
+      throw Gow3Error(description: "Missing \(folderLabel)/game/eboot.bin (the dumped game folder, with update 01.02 merged in).")
     }
   }
 
@@ -171,7 +205,7 @@ public class Gow3CoreModule: Module {
     let root = gameRoot
     let manager = FileManager.default
     let boot = root.appendingPathComponent("boot-linked.bin").path
-    let game = root.appendingPathComponent("game").path
+    let game = (app0(in: root) ?? root.appendingPathComponent("game")).path
     let user = root.appendingPathComponent("user").path
     try? manager.createDirectory(atPath: user, withIntermediateDirectories: true)
     var args = ["gow3", boot] + (cpuOnly ? ["--cpu-only"] : []) + ["--app0", game, "--user", user, "--timeout", "0"]
@@ -277,7 +311,10 @@ public class Gow3CoreModule: Module {
       gow3_jit_debugged() != 0
     }
 
+    // Inside LiveContainer, canOpenURL answers from LiveContainer's Info.plist, which does not list the
+    // stikdebug scheme, so it says no even with StikDebug installed: there enableJit just tries to open it.
     AsyncFunction("isStikDebugInstalled") { () -> Bool in
+      if Gow3LiveContainer.isActive { return true }
       guard let url = URL(string: "stikdebug://enable-jit") else { return false }
       return UIApplication.shared.canOpenURL(url)
     }.runOnQueue(.main)
@@ -298,7 +335,9 @@ public class Gow3CoreModule: Module {
         start()
         return
       }
-      guard let bundleId = Bundle.main.bundleIdentifier, let script = Gow3CoreModule.universalScript else {
+      // StikDebug finds the app iOS knows: inside LiveContainer that is LiveContainer, not this bundle.
+      guard let bundleId = Gow3LiveContainer.hostBundleIdentifier ?? Bundle.main.bundleIdentifier,
+            let script = Gow3CoreModule.universalScript else {
         promise.reject(Gow3Error(description: "bundle id or JIT script missing"))
         return
       }
@@ -318,7 +357,9 @@ public class Gow3CoreModule: Module {
         if opened {
           start()
         } else {
-          promise.reject(Gow3Error(description: "StikDebug is not installed"))
+          promise.reject(Gow3Error(description: Gow3LiveContainer.isActive
+            ? "StikDebug did not open. Install StikDebug, or start the app from LiveContainer with \"Launch with JIT\"."
+            : "StikDebug is not installed"))
         }
       }
     }.runOnQueue(.main)
@@ -415,13 +456,18 @@ public class Gow3CoreModule: Module {
     /// What the loader needs in Documents/gow3, and which of it is there.
     Function("gameFiles") { () -> [String: Any] in
       let root = Gow3CoreModule.gameRoot
-      try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-      func exists(_ name: String) -> Bool { FileManager.default.fileExists(atPath: root.appendingPathComponent(name).path) }
-      return ["folder": "Documents/gow3", "boot": exists("boot-linked.bin"), "content": exists("content.bin"),
-              "patches": exists("patches.bin"), "eboot": exists("game/eboot.bin"), "sfo": exists("game/sce_sys/param.sfo"),
+      let manager = FileManager.default
+      try? manager.createDirectory(at: root, withIntermediateDirectories: true)
+      func exists(_ name: String) -> Bool { manager.fileExists(atPath: root.appendingPathComponent(name).path) }
+      let app0 = Gow3CoreModule.app0(in: root)
+      func inGame(_ name: String) -> Bool { app0.map { manager.fileExists(atPath: $0.appendingPathComponent(name).path) } ?? false }
+      let cover = app0?.appendingPathComponent("sce_sys/icon0.png")
+      return ["folder": Gow3CoreModule.folderLabel, "liveContainer": Gow3LiveContainer.isActive,
+              "boot": exists("boot-linked.bin"), "content": exists("content.bin"),
+              "patches": exists("patches.bin"), "eboot": app0 != nil, "sfo": inGame("sce_sys/param.sfo"),
               "started": Gow3CoreModule.gameStarted,
               // The dump's own cover (sce_sys/icon0.png) for the launcher's game tile; empty without one.
-              "cover": exists("game/sce_sys/icon0.png") ? root.appendingPathComponent("game/sce_sys/icon0.png").absoluteString : ""]
+              "cover": inGame("sce_sys/icon0.png") ? cover!.absoluteString : ""]
     }
 
     /// Starts the game CPU-only: the loader maps the eboot, links it against the runtime and runs it

@@ -31,7 +31,11 @@ gow3-ios brings its own debugger client, the same design as Madeira's "Built-in 
 StikDebug still works as a fallback: **Enable JIT** uses it when the app is not paired.
 
 ## Known limits
-- iOS 26+ for the helper, iOS 27+ for in-app pairing. Not inside LiveContainer.
+- iOS 26+ for the helper, iOS 27+ for in-app pairing. Not inside LiveContainer: there **Enable JIT**
+  opens StikDebug for LiveContainer's process (its bundle ID, from the main executable's Info.plist),
+  without the `canOpenURL` check, which LiveContainer's Info.plist would fail. Game files may also sit in
+  a `gow3` folder at LiveContainer's top level instead of the app's data container
+  (`Gow3LiveContainer.swift`).
 - When a sideloader renames the bundle ID, iOS may refuse the background task that keeps pairing alive
   (`<bundle id>.pairing.session`). Then the app only has about 30 s in the background, so go to Settings
   straight away.

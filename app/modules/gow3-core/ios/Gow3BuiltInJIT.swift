@@ -34,7 +34,9 @@ enum Gow3BuiltInJIT {
       return "Built-in JIT works only on a physical device."
     #else
       guard #available(iOS 26.0, *) else { return "Built-in JIT needs iOS 26 or later." }
-      if getenv("LC_HOME_PATH") != nil { return "Built-in JIT does not work inside LiveContainer." }
+      if Gow3LiveContainer.isActive {
+        return "Built-in JIT does not work inside LiveContainer. Enable JIT uses StikDebug instead, or start the app from LiveContainer with \"Launch with JIT\"."
+      }
       if helperIdentifier == nil {
         return "The JIT helper is missing from this install. Reinstall, and keep app extensions if the sideloader asks."
       }

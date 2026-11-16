@@ -398,7 +398,9 @@ export default function App() {
 
             <Panel title="Game files" subtitle={filesReady ? 'All required files found' : `${missing} required file${missing === 1 ? '' : 's'} missing`}>
               <Text style={styles.body}>
-                {`Files app › On My iPhone › ${APP_NAME} › gow3. Use your own legally dumped copy (CUSA01623/01715/01720, update 01.02) and the files the PC prepare step makes.`}
+                {files.liveContainer
+                  ? `Files app › On My iPhone › ${files.folder.split('/').join(' › ')}. In LiveContainer, a gow3 folder at LiveContainer's top level works too. Use your own legally dumped copy (CUSA01623/01715/01720) with update 01.02 merged into game/, and the files the PC prepare step makes.`
+                  : `Files app › On My iPhone › ${APP_NAME} › gow3. Use your own legally dumped copy (CUSA01623/01715/01720, update 01.02) and the files the PC prepare step makes.`}
               </Text>
               <View style={styles.fileList}>
                 <FileLine name="boot-linked.bin" present={files.boot} required />
