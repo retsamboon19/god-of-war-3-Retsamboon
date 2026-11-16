@@ -62,11 +62,23 @@ final class Gow3GameControllerPad {
     let l2 = Self.trigger(g.leftTrigger.value), r2 = Self.trigger(g.rightTrigger.value)
     if l2 > 30 { bits |= 0x100 }
     if r2 > 30 { bits |= 0x200 }
-    // PS4 sticks: 0 is left/up, 255 right/down; GameController's y is up-positive.
-    let lx = Self.axis(g.leftThumbstick.xAxis.value), ly = Self.axis(-g.leftThumbstick.yAxis.value)
-    let rx = Self.axis(g.rightThumbstick.xAxis.value), ry = Self.axis(-g.rightThumbstick.yAxis.value)
+    // PS4 sticks: 0 is left/up, 255 right/down; GameController's y is up-positive. A resting stick
+    // that reads slightly off centre would keep nudging Kratos (the game's own deadzone is small).
+    let (lsx, lsy) = Self.deadzone(g.leftThumbstick.xAxis.value, g.leftThumbstick.yAxis.value)
+    let (rsx, rsy) = Self.deadzone(g.rightThumbstick.xAxis.value, g.rightThumbstick.yAxis.value)
+    let lx = Self.axis(lsx), ly = Self.axis(-lsy)
+    let rx = Self.axis(rsx), ry = Self.axis(-rsy)
     let sticks = lx | ly << 8 | rx << 16 | ry << 24
     gow3_gc_pad(1, bits, sticks, l2 | r2 << 8)
+  }
+
+  /// Radial deadzone of 15 %, rescaled so the stick still reaches full deflection.
+  private static func deadzone(_ x: Float, _ y: Float) -> (Float, Float) {
+    let zone: Float = 0.15
+    let length = (x * x + y * y).squareRoot()
+    guard length > zone else { return (0, 0) }
+    let scale = min(1, (length - zone) / (1 - zone)) / length
+    return (x * scale, y * scale)
   }
 
   private static func axis(_ v: Float) -> UInt32 {
