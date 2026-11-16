@@ -215,7 +215,25 @@ void gow3_touch_pad(uint32_t buttons, uint32_t sticks) {
 }
 /* For the window code (gpu/ios/window_ios.mm): the save list and the settings menu take gamepad
  * events, not the sampled state, so the on-screen buttons are replayed to them as events. */
-uint32_t gow3_touch_buttons(void) { return __atomic_load_n(&touch_buttons,__ATOMIC_RELAXED); }
+/* iOS GameController fallback (Gow3GameControllerPad.swift): any controller iOS sees, used only while
+ * SDL has no gamepad (some pads, e.g. GameSir USB-C phone controllers, reach the GameController
+ * framework but not SDL). Written by the UI thread, read here. */
+static uint32_t gc_buttons, gc_sticks=0x80808080u, gc_triggers;
+static int gc_connected, sdl_has_pad;
+void gow3_gc_pad(int32_t connected, uint32_t buttons, uint32_t sticks, uint32_t triggers) {
+    __atomic_store_n(&gc_buttons,buttons,__ATOMIC_RELAXED);
+    __atomic_store_n(&gc_sticks,sticks,__ATOMIC_RELAXED);
+    __atomic_store_n(&gc_triggers,triggers,__ATOMIC_RELAXED);
+    __atomic_store_n(&gc_connected,connected,__ATOMIC_RELAXED);
+}
+static bool gc_in_use(void) {
+    return __atomic_load_n(&gc_connected,__ATOMIC_RELAXED) && !__atomic_load_n(&sdl_has_pad,__ATOMIC_RELAXED);
+}
+uint32_t gow3_touch_buttons(void) {
+    uint32_t buttons=__atomic_load_n(&touch_buttons,__ATOMIC_RELAXED);
+    if (gc_in_use()) buttons|=__atomic_load_n(&gc_buttons,__ATOMIC_RELAXED);
+    return buttons;
+}
 static void key_axis(uint8_t *axis, bool negative, bool positive) {
     if (negative || positive) *axis=(uint8_t)(128-(negative ? 128 : 0)+(positive ? 127 : 0));
 }
@@ -226,7 +244,18 @@ static void sample_host(PadData *d) {
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
+    __atomic_store_n(&sdl_has_pad,g!=NULL,__ATOMIC_RELAXED);
     if (gow3gpu_overlay_captures_input()) return; /* settings menu open: neutral input */
+    if (!g && gc_in_use()) {
+        static bool logged;
+        if (!logged) { logged=true; printf("Runtime: gamepad from the iOS GameController framework (SDL has none)\n"); }
+        d->buttons|=__atomic_load_n(&gc_buttons,__ATOMIC_RELAXED);
+        const uint32_t sticks=__atomic_load_n(&gc_sticks,__ATOMIC_RELAXED), triggers=__atomic_load_n(&gc_triggers,__ATOMIC_RELAXED);
+        d->left_x=(uint8_t)sticks; d->left_y=(uint8_t)(sticks>>8); d->right_x=(uint8_t)(sticks>>16); d->right_y=(uint8_t)(sticks>>24);
+        d->l2=(uint8_t)triggers; d->r2=(uint8_t)(triggers>>8);
+        if (d->l2>30) d->buttons|=BTN_L2;
+        if (d->r2>30) d->buttons|=BTN_R2;
+    }
     const bool *k=SDL_WasInit(SDL_INIT_VIDEO) ? SDL_GetKeyboardState(NULL) : NULL;
     load_button_maps();
     if (g) {

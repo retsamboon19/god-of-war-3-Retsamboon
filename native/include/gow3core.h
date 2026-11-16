@@ -38,6 +38,10 @@ size_t gow3_gpu_screen_test(void *metal_layer, uint32_t width, uint32_t height, 
  * touchpad side, 0x20000000 opens or closes the settings menu) and the sticks (left x, left y, right x, right y in bytes 0-3, 128 centered). They add
  * to a connected controller's input. Call with (0, 0x80808080) to release everything. */
 void gow3_touch_pad(uint32_t buttons, uint32_t sticks);
+/* A controller seen by iOS's GameController framework, used only while SDL has no gamepad: the same
+ * button bits and stick bytes as gow3_touch_pad, and L2/R2 (0-255) in bytes 0/1 of `triggers`.
+ * Call with connected=0 when it goes away. */
+void gow3_gc_pad(int32_t connected, uint32_t buttons, uint32_t sticks, uint32_t triggers);
 
 #ifdef __cplusplus
 }

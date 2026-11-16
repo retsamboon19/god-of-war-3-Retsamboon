@@ -201,6 +201,8 @@ public class Gow3CoreModule: Module {
   /// Runs the loader (gow3_start) on its own thread with the game in Documents/gow3.
   private static func startLoader(cpuOnly: Bool) throws {
     try checkCanStart()
+    // Controllers SDL does not open (some USB-C phone pads) still reach the game through this.
+    DispatchQueue.main.async { Gow3GameControllerPad.shared.start() }
     let envFile = applyEnvFile()
     let root = gameRoot
     let manager = FileManager.default
